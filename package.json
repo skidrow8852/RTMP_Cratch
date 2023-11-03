@@ -1,0 +1,24 @@
+{
+  "name": "rtmp",
+  "version": "1.0.0",
+  "description": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bull": "^4.11.4",
+    "dotenv": "^16.0.3",
+    "fluent-ffmpeg": "^2.1.2",
+    "mongoose": "^6.6.5",
+    "nanoid": "^3.3.4",
+    "node-cron": "^3.0.2",
+    "node-media-server": "^2.4.7",
+    "request": "^2.88.2",
+    "web3.storage": "^4.4.0"
+  }
+}
