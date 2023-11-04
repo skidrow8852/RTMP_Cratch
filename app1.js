@@ -2,24 +2,23 @@ require('./connection')
 const NodeMediaServer = require('node-media-server');
 const Live = require("./modal/Live")
 const StreamChat = require("./modal/StreamChat")
-const Like = require('./modal/Likes')
 const SavedLive = require("./modal/SavedLive")
 const SavedStreamChat = require("./modal/SavedStreamChat")
 var {nanoid} = require('nanoid');
+const Like = require('./modal/Likes')
 const shell = require('child_process').execSync ; 
 const cron = require('node-cron');
 const ffmpeg = require('fluent-ffmpeg');
 const helpers = require("./helpers/helper")
 const request = require("request");
-const { Web3Storage }  = require('web3.storage')
+const { Web3Storage } = require('web3.storage')
 const util = require('util');
 const exec = util.promisify(require('child_process').exec);
 const fs = require('fs');
-const Queue = require('bull');
 const { promisify } = require('util');
 const stat = promisify(fs.stat);
 const unlink = promisify(fs.unlink);
-
+const videoQueue = require('./redis')
 
 const config = {
   rtmp: {
@@ -43,21 +42,20 @@ const config = {
   },
   trans: {
     ffmpeg: '/usr/bin/ffmpeg',
-     tasks: [
+       tasks: [
         {
-          app: 'live',
+          app: 'live2',
           hls: true,
           hlsFlags: '[hls_time=2:hls_list_size=3:hls_flags=delete_segments]',
           mp4: true,
           mp4Flags: '[movflags=frag_keyframe+empty_moov]',
           dash: true,
           dashFlags: '[f=dash:window_size=3:extra_window_size=5]'
-
+          
         }
 
+      
       ]
-
-
   },
   relay: {
     ffmpeg: '/usr/bin/ffmpeg',
@@ -69,7 +67,7 @@ const config = {
         
       },
       {
-        app: 'live',
+        app: 'live3',
         mode : 'push',
         edge : 'rtmp://localhost:1937'
         
@@ -79,8 +77,6 @@ const config = {
 };
 
 var nms = new NodeMediaServer(config)
-
-const videoQueue = new Queue('video processing', 'redis://127.0.0.1:6379');
 
 nms.on('prePublish', async (id, StreamPath, args) => {
   let stream_key = getStreamKeyFromStreamPath(StreamPath);
@@ -144,7 +140,7 @@ nms.on('donePublish', async(id, StreamPath, args) => {
     		likes : live.likes,
     		views : live.views,
 	}).save()
-
+	
 	const likes = await Like.find({liveId : live?._id});
       if(likes?.length > 0) {
         likes.map(async(like) => {
@@ -156,39 +152,32 @@ nms.on('donePublish', async(id, StreamPath, args) => {
       }
 
 	await Like.deleteMany({liveId : live?._id});
-
+	
         await ffmpeg.ffprobe(`./media/live/${stream_key}/${ID}.mp4`, 
 		async (error, metadata) =>{
                 	const totalSeconds = Math.floor(metadata.format.duration);
                 	const minutes = Math.floor(totalSeconds / 60) % 60;
-                        const hours = Math.floor(totalSeconds / 3600);
+                  const hours = Math.floor(totalSeconds / 3600);
 
-                        const formattedMinutes = ('0' + minutes).slice(-2);
-                        const formattedSeconds = ('0' + Math.floor(totalSeconds % 60)).slice(-2);
+                  const formattedMinutes = ('0' + minutes).slice(-2);
+                  const formattedSeconds = ('0' + Math.floor(totalSeconds % 60)).slice(-2);
 
-                        let duration = `${formattedMinutes}:${formattedSeconds}`;
+                  let duration = `${formattedMinutes}:${formattedSeconds}`;
 
-                        if (hours > 0) {
-                                duration = `${hours}:${duration}`;
-                        }
-
-                	const live =  await SavedLive.findOneAndUpdate({streamId : ID} , {duration : duration});
-
-			const streamPath = `./media/live/${stream_key}/${ID}.mp4`;
-                        
-			 const command = `ffmpeg -i ${streamPath} -t ${duration} -c:v copy -c:a copy -map_metadata 0 -metadata:s:v:0 rotate=0 -metadata:s:a:0 language=eng -f mp4 ${streamPath}_copy.mp4 && mv ${streamPath}_copy.mp4 ${streamPath}`;
-                  
-                  try{
-                    await exec(command);
-
-                  }catch(e){
-                    console.log(e)
+                  if (hours > 0) {
+                    duration = `${hours}:${duration}`;
                   }
+                	const live =  await SavedLive.findOneAndUpdate({streamId : ID} , {duration : duration});
+			const streamPath = `./media/live/${stream_key}/${ID}.mp4`;
+    			const command = `ffmpeg -i ${streamPath} -t ${duration} -c:v copy -c:a copy -map_metadata 0 -metadata:s:v:0 rotate=0 -metadata:s:a:0 language=eng -f mp4 ${streamPath}_copy.mp4 && mv ${streamPath}_copy.mp4 ${streamPath}`;
+                  
+                  	try{
+                    		await exec(command);
 
-                  videoQueue.add({ streamPath: streamPath });
-
-
-
+                  	}catch(e){
+                    		console.log(e)
+                  	}			
+		       videoQueue.add({ streamPath: streamPath });
                 });
 
 	}
@@ -204,10 +193,8 @@ const getStreamKeyFromStreamPath = (path) => {
 };
 
 
-
 videoQueue.process(async (job) => {
   const { streamPath } = job.data;
-
   try {
     // Check file size
     const fileStats = await stat(streamPath);
@@ -274,16 +261,11 @@ videoQueue.process(async (job) => {
   }
 });
 
-
 nms.run();
 
 function makeStorageClient() {  
   return new Web3Storage({ token: process.env.IPFS_KEY })
 }
-
-
-
-
 
 async function storeVideo(file) {
 

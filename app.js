@@ -12,13 +12,13 @@ const ffmpeg = require('fluent-ffmpeg');
 const helpers = require("./helpers/helper")
 const request = require("request");
 const { Web3Storage } = require('web3.storage')
-const Queue = require('bull');
 const util = require('util');
 const exec = util.promisify(require('child_process').exec);
 const fs = require('fs');
 const { promisify } = require('util');
 const stat = promisify(fs.stat);
 const unlink = promisify(fs.unlink);
+const videoQueue = require('./redis')
 
 const config = {
   rtmp: {
@@ -61,13 +61,13 @@ const config = {
     ffmpeg: '/usr/bin/ffmpeg',
     tasks: [
       {
-        app: 'live',
+        app: 'live2',
         mode : 'push',
         edge : 'rtmp://localhost:1936'
         
       },
       {
-        app: 'live',
+        app: 'live3',
         mode : 'push',
         edge : 'rtmp://localhost:1937'
         
@@ -77,7 +77,6 @@ const config = {
 };
 
 var nms = new NodeMediaServer(config)
-const videoQueue = new Queue('video processing', 'redis://127.0.0.1:6379');
 
 nms.on('prePublish', async (id, StreamPath, args) => {
   let stream_key = getStreamKeyFromStreamPath(StreamPath);
@@ -158,16 +157,16 @@ nms.on('donePublish', async(id, StreamPath, args) => {
 		async (error, metadata) =>{
                 	const totalSeconds = Math.floor(metadata.format.duration);
                 	const minutes = Math.floor(totalSeconds / 60) % 60;
-                  	const hours = Math.floor(totalSeconds / 3600);
+                  const hours = Math.floor(totalSeconds / 3600);
 
-                  	const formattedMinutes = ('0' + minutes).slice(-2);
-                  	const formattedSeconds = ('0' + Math.floor(totalSeconds % 60)).slice(-2);
+                  const formattedMinutes = ('0' + minutes).slice(-2);
+                  const formattedSeconds = ('0' + Math.floor(totalSeconds % 60)).slice(-2);
 
-                  	let duration = `${formattedMinutes}:${formattedSeconds}`;
+                  let duration = `${formattedMinutes}:${formattedSeconds}`;
 
-                  	if (hours > 0) {
-                    		duration = `${hours}:${duration}`;
-                  	}
+                  if (hours > 0) {
+                    duration = `${hours}:${duration}`;
+                  }
                 	const live =  await SavedLive.findOneAndUpdate({streamId : ID} , {duration : duration});
 			const streamPath = `./media/live/${stream_key}/${ID}.mp4`;
     			const command = `ffmpeg -i ${streamPath} -t ${duration} -c:v copy -c:a copy -map_metadata 0 -metadata:s:v:0 rotate=0 -metadata:s:a:0 language=eng -f mp4 ${streamPath}_copy.mp4 && mv ${streamPath}_copy.mp4 ${streamPath}`;
@@ -196,7 +195,6 @@ const getStreamKeyFromStreamPath = (path) => {
 
 videoQueue.process(async (job) => {
   const { streamPath } = job.data;
-
   try {
     // Check file size
     const fileStats = await stat(streamPath);

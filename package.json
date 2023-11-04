@@ -19,6 +19,7 @@
     "node-cron": "^3.0.2",
     "node-media-server": "^2.4.7",
     "request": "^2.88.2",
+    "util": "^0.12.5",
     "web3.storage": "^4.4.0"
   }
 }
