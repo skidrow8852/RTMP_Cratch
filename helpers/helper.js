@@ -7,14 +7,20 @@ const generateStreamThumbnail = (stream_key) => {
         '-ss', '00:00:01',
         '-vframes', '1',
         '-vf', 'scale=-2:300',
-        './media/live/'+stream_key+'/image.png',
+        '/home/sites/rtmp/media/live/'+stream_key+'/image.png',
     ];
 
-    spawn('/usr/bin/ffmpeg', args, {
-        detached: true,
-        stdio: 'ignore'
-    }).unref();
+    const thumbnailProcess = spawn('/usr/bin/ffmpeg', args);
+
+    thumbnailProcess.on('error', (err) => {
+        console.error('Error generating thumbnail:', err);
+    });
+
+    thumbnailProcess.on('exit', (code) => {
+        console.log('Thumbnail generation process exited with code:', code);
+    });
 };
+
 
 module.exports = {
     generateStreamThumbnail : generateStreamThumbnail
