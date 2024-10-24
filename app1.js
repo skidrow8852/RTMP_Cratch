@@ -317,25 +317,6 @@ cron.schedule('* * 12 * *', async() => {
   const liveChat = await StreamChat.deleteMany({ "createdAt": { $gt: new Date(Date.now() - 12*60*60 * 1000) } });
 }).start();
 
-cron.schedule('* * 24 * *', async() => {
-  try {
-    const savedLivesIpfsStore = await SavedLive.find({ ipfsUrl: { $exists: false } }).then((data) => {
-      if(data?.length > 0) {
-          data?.map(async(item) => {
-            const response = await fetch(item.streamUrl);
-            const blob = await response.blob();
-            const file = new File([blob], "videp.mp4", { type: "video/mp4" });
-            const url = await storeVideo(file)
-            await SavedLive.updateOne({streamId : item.streamId}, { $set: { ipfsUrl: url}},{upsert:true})
-        })
-      }
-        
-    })
-  }catch(e) {
-    console.log(e)
-  }
-  
-}).start();
 
 
 
