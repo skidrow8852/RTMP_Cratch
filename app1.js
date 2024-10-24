@@ -58,7 +58,7 @@ const config = {
       {
         app: 'live',
         mode: 'push',
-        edge: 'rtmp://localhost:1936'
+        edge: 'rtmp://localhost:1935'
       },
       {
         app: 'live',
