@@ -10,7 +10,6 @@ const cron = require('node-cron');
 const ffmpeg = require('fluent-ffmpeg');
 const helpers = require("./helpers/helper");
 const request = require("request");
-const { Web3Storage } = require('web3.storage');
 const util = require('util');
 const exec = util.promisify(require('child_process').exec);
 const fs = require('fs');
@@ -82,6 +81,16 @@ nms.on('prePublish', async (id, StreamPath, args) => {
   const stream_key = getStreamKeyFromStreamPath(StreamPath);
   console.log('[NodeEvent on prePublish]', `id=${id} StreamPath=${StreamPath} args=${JSON.stringify(args)}`);
 
+  const activeStreams = await Live.countDocuments({ isActive: true });
+  const MAX_STREAMS = 50; // Limit to 50 concurrent streams
+
+  if (activeStreams >= MAX_STREAMS) {
+    let session = nms.getSession(id);
+    session.reject();
+    console.log(`Stream rejected. Too many active streams.`);
+    return;
+  }
+
   try {
     const user = await Live.findOne({ streamKey: stream_key });
     if (!user) {
@@ -109,24 +118,27 @@ nms.on('prePublish', async (id, StreamPath, args) => {
 nms.on('donePublish', async (id, StreamPath, args) => {
   const stream_key = getStreamKeyFromStreamPath(StreamPath);
   const ID = nanoid();
-  const currentPath = `/home/sites/rtmp/media/live/${stream_key}/video.mp4`;
-  const newPath = `/home/sites/rtmp/media/live/${stream_key}/${ID}.mp4`;
+  const currentPath = `/home/sites/cratch/live/rtmp/media/live/${stream_key}/video.mp4`;
+  const newPath = `/home/sites/cratch/live/rtmp/media/live/${stream_key}/${ID}.mp4`;
 
   try {
     await exec(`mv ${currentPath} ${newPath}`);
     
-    const live = await Live.findOneAndUpdate({ streamKey: stream_key }, { isActive: false });
-    
-    const content = await StreamChat.find({ liveId: live._id }).then(data =>
-      data.map(chat => ({
-        creator: chat.creator,
-        liveId: chat.liveId,
-        content: chat.content,
-        createdAt: chat.createdAt
-      }))
-    );
-    
+    const liveUpdatePromise = Live.findOneAndUpdate({ streamKey: stream_key }, { isActive: false });
+    const streamChatsPromise = StreamChat.find({ liveId: stream_key });
+    const likesPromise = Like.find({ liveId: stream_key });
+
+    const [live, streamChats, likes] = await Promise.all([liveUpdatePromise, streamChatsPromise, likesPromise]);
+
+    const content = streamChats.map(chat => ({
+      creator: chat.creator,
+      liveId: chat.liveId,
+      content: chat.content,
+      createdAt: chat.createdAt
+    }));
+
     await new SavedStreamChat({ streamId: ID, content }).save();
+
     const savedLive = await new SavedLive({
       creator: live.creator,
       streamId: ID,
@@ -141,8 +153,7 @@ nms.on('donePublish', async (id, StreamPath, args) => {
       likes: live.likes,
       views: live.views
     }).save();
-    
-    const likes = await Like.find({ liveId: live._id });
+
     if (likes.length > 0) {
       for (const like of likes) {
         await new Like({ streamId: savedLive._id, userId: like.userId }).save();
@@ -160,8 +171,7 @@ nms.on('donePublish', async (id, StreamPath, args) => {
       
       await SavedLive.findOneAndUpdate({ streamId: ID }, { duration: formattedTime });
 
-      // Async non-blocking FFmpeg task for video processing
-      const command = `ffmpeg -i ${newPath} -preset ultrafast -c:v copy -c:a copy -map_metadata 0 -metadata:s:v:0 rotate=0 -metadata:s:a:0 language=eng -f mp4 ${newPath}_copy.mp4 && mv ${newPath}_copy.mp4 ${newPath}`;
+      const command = `ffmpeg -i ${newPath} -preset fast -crf 28 -c:v libx264 -c:a aac -strict -2 -y ${newPath}_copy.mp4 && mv ${newPath}_copy.mp4 ${newPath}`;
       try {
         await exec(command);
       } catch (err) {
@@ -176,8 +186,8 @@ nms.on('donePublish', async (id, StreamPath, args) => {
   }
 });
 
-// Redis video processing
-videoQueue.process(async (job) => {
+// Redis video processing queue with 5 concurrent workers
+videoQueue.process(5, async (job) => {
   const { streamPath } = job.data;
   try {
     const fileStats = await stat(streamPath);
@@ -185,17 +195,19 @@ videoQueue.process(async (job) => {
     const fileSizeInGB = fileSizeInBytes / (1024 * 1024 * 1024);
 
     const command = fileSizeInGB > 5
-      ? `ffmpeg -n -loglevel error -i ${streamPath} -vcodec libx264 -crf 28 -preset ultrafast -tune film ${streamPath}_copy.mp4 && mv ${streamPath}_copy.mp4 ${streamPath}`
-      : `ffmpeg -n -loglevel error -i ${streamPath} -vcodec libx264 -crf 28 -preset ultrafast -tune film ${streamPath}_copy.mp4 && mv ${streamPath}_copy.mp4 ${streamPath}`;
+      ? `ffmpeg -n -loglevel error -i ${streamPath} -vcodec libx264 -crf 28 -preset fast -tune film ${streamPath}_copy.mp4 && mv ${streamPath}_copy.mp4 ${streamPath}`
+      : `ffmpeg -n -loglevel error -i ${streamPath} -vcodec libx264 -crf 28 -preset fast -tune film ${streamPath}_copy.mp4 && mv ${streamPath}_copy.mp4 ${streamPath}`;
     
     await exec(command);
   } catch (error) {
     console.log('Error processing video:', error);
+    throw new Error(`Video processing failed for job: ${job.id}`);  // Throw error to mark the job as failed
   }
 });
 
+
 // Cron jobs: Adjusted frequency for optimizations
-cron.schedule('*/1 * * * *', () => {
+cron.schedule('*/5 * * * *', () => {
   request.get('http://127.0.0.1:8000/api/streams', (error, response, body) => {
     if (body && body !== 'Unauthorized') {
       const streams = JSON.parse(body);
@@ -210,8 +222,9 @@ cron.schedule('*/1 * * * *', () => {
   });
 }).start();
 
-cron.schedule('* * 12 * *', async () => {
-  await StreamChat.deleteMany({ "createdAt": { $gt: new Date(Date.now() - 12 * 60 * 60 * 1000) } });
+// Clean up old stream chats every 24 hours
+cron.schedule('0 0 * * *', async () => {
+  await StreamChat.deleteMany({ "createdAt": { $lt: new Date(Date.now() - 12 * 60 * 60 * 1000) } });
 }).start();
 
 nms.run();
