@@ -82,14 +82,6 @@ nms.on('prePublish', async (id, StreamPath, args) => {
   console.log('[NodeEvent on prePublish]', `id=${id} StreamPath=${StreamPath} args=${JSON.stringify(args)}`);
 
   const activeStreams = await Live.countDocuments({ isActive: true });
-  const MAX_STREAMS = 50; // Limit to 50 concurrent streams
-
-  if (activeStreams >= MAX_STREAMS) {
-    let session = nms.getSession(id);
-    session.reject();
-    console.log(`Stream rejected. Too many active streams.`);
-    return;
-  }
 
   try {
     const user = await Live.findOne({ streamKey: stream_key });
@@ -206,8 +198,8 @@ videoQueue.process(5, async (job) => {
 });
 
 
-// Cron jobs: Adjusted frequency for optimizations
-cron.schedule('*/5 * * * *', () => {
+// Cron jobs
+cron.schedule('* * * * *', () => {
   request.get('http://127.0.0.1:8000/api/streams', (error, response, body) => {
     if (body && body !== 'Unauthorized') {
       const streams = JSON.parse(body);
