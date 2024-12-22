@@ -1,4 +1,4 @@
-require('./connection');
+require('./db/connection');
 const NodeMediaServer = require('node-media-server');
 const Live = require("./modal/Live");
 const StreamChat = require("./modal/StreamChat");
@@ -16,7 +16,7 @@ const fs = require('fs');
 const { promisify } = require('util');
 const stat = promisify(fs.stat);
 const unlink = promisify(fs.unlink);
-const videoQueue = require('./redis');
+const videoQueue = require('./db/queue');
 
 // Configuration for NodeMediaServer
 const config = {
